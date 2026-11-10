@@ -10,7 +10,18 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: テスト(package.jsonにtestがあれば実行)
+        run: |
+          if [ -f package.json ] && grep -q '"test"' package.json; then npm ci && npm test; else echo "no tests"; fi
+
   deploy:
+    needs: check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
