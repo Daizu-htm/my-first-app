@@ -2,7 +2,7 @@ name: Deploy to Lolipop
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'claude/**'] # Claudeがpushしたら自動公開
   workflow_dispatch: # GitHub Actionsタブ/スマホから手動実行も可
 
 concurrency:
