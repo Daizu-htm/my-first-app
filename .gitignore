@@ -4,3 +4,5 @@ out/
 *.mov
 .DS_Store
 videos/showcase2/audio.js
+videos/tiktok1/events.json
+videos/tiktok1/meta.js

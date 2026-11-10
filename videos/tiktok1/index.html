@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>tiktok1</title>
+<style>html,body{margin:0;background:#000;overflow:hidden}canvas{display:block}</style>
+</head>
+<body>
+<canvas id="c" width="1080" height="1920"></canvas>
+<script src="sim.js"></script>
+<script src="meta.js"></script>
+<script>
+// シミュレーションの状態を1フレームずつ描く。renderFrame(f) を外から呼んで撮影する。
+const W = 1080, H = 1920, cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const SANS = '"Noto Sans CJK JP",sans-serif';
+const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
+const ease = t => { t = clamp(t); return t * t * (3 - 2 * t); };
+const easeOutBack = t => { t = clamp(t); const c = 2.2; return 1 + (c + 1) * Math.pow(t - 1, 3) + c * Math.pow(t - 1, 2); };
+let S = null;
+const bc = document.createElement('canvas'); bc.width = 270; bc.height = 480; const bctx = bc.getContext('2d');
+function bloom(a, blur) { bctx.clearRect(0, 0, 270, 480); bctx.drawImage(cv, 0, 0, 270, 480); ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.filter = `blur(${blur}px)`; ctx.globalAlpha = a; ctx.drawImage(bc, 0, 0, W, H); ctx.restore(); }
+function txt(s, x, y, size, color, o = {}) {
+  ctx.save(); ctx.font = `${o.weight || 900} ${size}px ${SANS}`; ctx.textAlign = o.align || 'center'; ctx.textBaseline = 'middle'; ctx.globalAlpha = o.alpha === undefined ? 1 : o.alpha;
+  if (o.stroke) { ctx.lineJoin = 'round'; ctx.lineWidth = o.stroke; ctx.strokeStyle = 'rgba(0,0,0,.85)'; ctx.strokeText(s, x, y); }
+  if (o.glow) { ctx.shadowColor = o.glow; ctx.shadowBlur = o.blur || 30; }
+  ctx.fillStyle = color; ctx.fillText(s, x, y); ctx.restore();
+}
+window.renderFrame = function (f) {
+  if (!S || S.frame !== f - 1) { S = createSim(META.seed); while (S.frame < f - 1) S.step(); }
+  S.step();
+  const t = S.t, CX = S.CX, CY = S.CY, left = S.NR - S.inner;
+  ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over'; ctx.filter = 'none';
+  ctx.fillStyle = '#05050c'; ctx.fillRect(0, 0, W, H);
+  const hueBg = 230 + S.inner * 11, rg = ctx.createRadialGradient(CX, CY, 0, CX, CY, 950);
+  rg.addColorStop(0, `hsla(${hueBg},70%,${16 + S.flash * 30}%,1)`); rg.addColorStop(1, 'rgba(5,5,12,0)');
+  ctx.fillStyle = rg; ctx.fillRect(0, 0, W, H);
+  ctx.save();
+  ctx.translate(Math.sin(f * 2.3) * S.shake, Math.cos(f * 3.1) * S.shake);
+  // リング
+  ctx.lineCap = 'round';
+  for (let i = S.NR - 1; i >= 0; i--) {
+    const r = S.rings[i]; if (!r.alive) continue;
+    const act = i === S.inner;
+    ctx.beginPath(); ctx.arc(CX, CY, r.r, r.a + r.gap, r.a + 6.2832 - r.gap);
+    ctx.strokeStyle = `hsla(${r.hue},100%,${(act ? 62 : 55) + r.flash * 30}%,${act ? 1 : .5})`;
+    ctx.lineWidth = act ? 10 + r.flash * 5 : 7; ctx.shadowColor = `hsl(${r.hue},100%,60%)`; ctx.shadowBlur = act ? 26 + r.flash * 30 : 8; ctx.stroke();
+  }
+  ctx.shadowBlur = 0; ctx.globalCompositeOperation = 'lighter';
+  // 衝撃波
+  for (const w of S.waves) { ctx.beginPath(); ctx.arc(CX, CY, w.r, 0, 6.2832); ctx.strokeStyle = `hsla(${w.hue},100%,70%,${w.life * .8})`; ctx.lineWidth = 6 + w.life * 16; ctx.stroke(); }
+  // 破片と火花
+  for (const p of S.parts) {
+    ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot); ctx.fillStyle = `hsla(${p.hue},100%,65%,${clamp(p.life * 1.3)})`;
+    ctx.fillRect(-p.sz, -p.sz * .3, p.sz * 2, p.sz * .6); ctx.restore();
+  }
+  // ボールと軌跡
+  for (const b of S.balls) {
+    const tr = b.trail, n = tr.length / 2;
+    for (let i = 1; i < n; i++) { ctx.beginPath(); ctx.moveTo(tr[i * 2 - 2], tr[i * 2 - 1]); ctx.lineTo(tr[i * 2], tr[i * 2 + 1]); ctx.strokeStyle = `hsla(${b.hue},100%,62%,${i / n * .6})`; ctx.lineWidth = S.BR * 1.6 * i / n; ctx.stroke(); }
+  }
+  ctx.globalCompositeOperation = 'source-over';
+  for (const b of S.balls) {
+    ctx.beginPath(); ctx.arc(b.x, b.y, S.BR, 0, 6.2832); ctx.fillStyle = `hsl(${b.hue},100%,70%)`; ctx.fill();
+    ctx.beginPath(); ctx.arc(b.x - 3, b.y - 3, S.BR * .5, 0, 6.2832); ctx.fillStyle = 'rgba(255,255,255,.9)'; ctx.fill();
+  }
+  ctx.restore();
+  bloom(.75, 14);
+  if (S.flash > .01) { ctx.fillStyle = `rgba(255,255,255,${S.flash * .35})`; ctx.fillRect(0, 0, W, H); }
+  // 文字(TikTokのボタンや説明文に隠れない位置)
+  const done = S.doneAt >= 0, u = done ? t - S.doneAt : 0;
+  const hookA = done ? 1 - ease(u / .3) : 1, pop = easeOutBack(t / .35);
+  ctx.save(); ctx.translate(CX, 290); ctx.scale(pop, pop);
+  txt('ボールが増えながら', 0, -44, 56, '#fff', { alpha: hookA, weight: 700, stroke: 10 });
+  txt('12個のリング、全部こわせる?', 0, 44, 68, '#ffe14d', { alpha: hookA, stroke: 12 });
+  ctx.restore();
+  if (!done) {
+    const sc = 1 + S.punch * .45;
+    ctx.save(); ctx.translate(CX, 1400); ctx.scale(sc, sc);
+    txt('残り', -70, 6, 54, '#cfd6ff', { align: 'right', weight: 700, stroke: 8 });
+    txt(String(left), -40, 0, 150, '#fff', { align: 'left', stroke: 12, glow: `hsl(${S.rings[Math.min(S.inner, S.NR - 1)].hue},100%,60%)`, blur: 40 });
+    ctx.restore();
+    txt(`ボール ${S.balls.length}個`, CX, 1510, 44, '#aab3e6', { weight: 700, stroke: 8 });
+  } else {
+    const p2 = easeOutBack(u / .4);
+    ctx.save(); ctx.translate(CX, 800); ctx.scale(p2, p2);
+    txt('全部こわした!', 0, 0, 140, '#fff', { stroke: 16, glow: '#ffb000', blur: 60 });
+    ctx.restore();
+    txt(`タイム ${S.doneAt.toFixed(1)}秒`, CX, 960, 70, '#ffe14d', { alpha: ease((u - .35) / .3), stroke: 12 });
+    txt('何秒だと思った?コメントで教えて', CX, 1400, 48, '#fff', { alpha: ease((u - .8) / .3), weight: 700, stroke: 10 });
+  }
+  if (f > META.frames - 10) { ctx.fillStyle = `rgba(5,5,12,${(f - META.frames + 10) / 10})`; ctx.fillRect(0, 0, W, H); }
+  return true;
+};
+</script>
+</body>
+</html>
