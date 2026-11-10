@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ja">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <title>tiktok1</title>
@@ -70,23 +70,23 @@ window.renderFrame = function (f) {
   const done = S.doneAt >= 0, u = done ? t - S.doneAt : 0;
   const hookA = done ? 1 - ease(u / .3) : 1, pop = easeOutBack(t / .35);
   ctx.save(); ctx.translate(CX, 290); ctx.scale(pop, pop);
-  txt('ボールが増えながら', 0, -44, 56, '#fff', { alpha: hookA, weight: 700, stroke: 10 });
-  txt('12個のリング、全部こわせる?', 0, 44, 68, '#ffe14d', { alpha: hookA, stroke: 12 });
+  txt('Balls double on every break', 0, -44, 54, '#fff', { alpha: hookA, weight: 700, stroke: 10 });
+  txt('Can they break all 12 rings?', 0, 44, 70, '#ffe14d', { alpha: hookA, stroke: 12 });
   ctx.restore();
   if (!done) {
     const sc = 1 + S.punch * .45;
-    ctx.save(); ctx.translate(CX, 1400); ctx.scale(sc, sc);
-    txt('残り', -70, 6, 54, '#cfd6ff', { align: 'right', weight: 700, stroke: 8 });
-    txt(String(left), -40, 0, 150, '#fff', { align: 'left', stroke: 12, glow: `hsl(${S.rings[Math.min(S.inner, S.NR - 1)].hue},100%,60%)`, blur: 40 });
+    ctx.save(); ctx.translate(CX - 70, 1400); ctx.scale(sc, sc);
+    txt(left === 1 ? 'RING LEFT' : 'RINGS LEFT', 20, 10, 54, '#cfd6ff', { align: 'left', weight: 700, stroke: 8 });
+    txt(String(left), -10, 0, 150, '#fff', { align: 'right', stroke: 12, glow: `hsl(${S.rings[Math.min(S.inner, S.NR - 1)].hue},100%,60%)`, blur: 40 });
     ctx.restore();
-    txt(`ボール ${S.balls.length}個`, CX, 1510, 44, '#aab3e6', { weight: 700, stroke: 8 });
+    txt(`${S.balls.length} ${S.balls.length === 1 ? 'BALL' : 'BALLS'}`, CX, 1510, 44, '#aab3e6', { weight: 700, stroke: 8 });
   } else {
     const p2 = easeOutBack(u / .4);
     ctx.save(); ctx.translate(CX, 800); ctx.scale(p2, p2);
-    txt('全部こわした!', 0, 0, 140, '#fff', { stroke: 16, glow: '#ffb000', blur: 60 });
+    txt('ALL CLEAR!', 0, 0, 150, '#fff', { stroke: 16, glow: '#ffb000', blur: 60 });
     ctx.restore();
-    txt(`タイム ${S.doneAt.toFixed(1)}秒`, CX, 960, 70, '#ffe14d', { alpha: ease((u - .35) / .3), stroke: 12 });
-    txt('何秒だと思った?コメントで教えて', CX, 1400, 48, '#fff', { alpha: ease((u - .8) / .3), weight: 700, stroke: 10 });
+    txt(`TIME ${S.doneAt.toFixed(1)}s`, CX, 960, 70, '#ffe14d', { alpha: ease((u - .35) / .3), stroke: 12 });
+    txt('What was your guess? Comment below', CX, 1400, 50, '#fff', { alpha: ease((u - .8) / .3), weight: 700, stroke: 10 });
   }
   if (f > META.frames - 10) { ctx.fillStyle = `rgba(5,5,12,${(f - META.frames + 10) / 10})`; ctx.fillRect(0, 0, W, H); }
   return true;
