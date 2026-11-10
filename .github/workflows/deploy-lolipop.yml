@@ -39,7 +39,8 @@ jobs:
           password: ${{ secrets.LOLIPOP_FTP_PASSWORD }}
           protocol: ftps
           local-dir: ./public/
-          server-dir: ${{ secrets.LOLIPOP_REMOTE_DIR }}
+          # LOLIPOP_REMOTE_DIR = ドメインのルート(例: /fertilizer.jp/)。公開先はその下のサブパス。
+          server-dir: ${{ secrets.LOLIPOP_REMOTE_DIR }}tool/clco/
           exclude: |
             **/.git*
             **/.git*/**
