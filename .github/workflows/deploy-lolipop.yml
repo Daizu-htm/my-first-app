@@ -1,0 +1,35 @@
+name: Deploy to Lolipop
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # GitHub Actionsタブ/スマホから手動実行も可
+
+concurrency:
+  group: deploy-lolipop
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # ビルドが必要なプロジェクトはここで実行し、local-dir を出力先(例: ./dist/)に変える
+      # - uses: actions/setup-node@v4
+      #   with: { node-version: 22 }
+      # - run: npm ci && npm run build
+
+      - name: Upload via FTPS
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.LOLIPOP_FTP_SERVER }}
+          username: ${{ secrets.LOLIPOP_FTP_USER }}
+          password: ${{ secrets.LOLIPOP_FTP_PASSWORD }}
+          protocol: ftps
+          local-dir: ./public/
+          server-dir: ${{ secrets.LOLIPOP_REMOTE_DIR }}
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/.gitkeep

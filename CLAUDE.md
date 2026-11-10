@@ -24,3 +24,8 @@
 - `videos/` 動画プロジェクト(Remotion等)
 - `assets/` 素材
 - `out/` 書き出し結果(gitignore)
+
+## デプロイ(ロリポップ)
+- `main`へのpushで`.github/workflows/deploy-lolipop.yml`がFTPSでアップロードする。手動実行も可。
+- 公開物は`public/`に置く(ビルドが要る場合はworkflowのlocal-dirを出力先に変更)。
+- 接続情報はGitHub Secretsのみ。コードやチャットに書かない。
