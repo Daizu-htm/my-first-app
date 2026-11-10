@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>showcase</title>
+<style>html,body{margin:0;background:#000;overflow:hidden}canvas{display:block}</style>
+</head>
+<body>
+<canvas id="c" width="1080" height="1920"></canvas>
+<script src="audio.js"></script>
+<script>
+// すべてのフレームを計算で描く。renderFrame(f) を外から1枚ずつ呼んで撮影する。
+const W = 1080, H = 1920, FPS = 30, TOTAL = 960;
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const SANS = '"Noto Sans CJK JP",sans-serif', MONO = '"Noto Sans Mono CJK JP",monospace';
+const A = window.AUDIO;
+const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
+const ease = t => { t = clamp(t); return t * t * (3 - 2 * t); };
+const easeOut = t => 1 - Math.pow(1 - clamp(t), 3);
+function rng32(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+
+function txt(s, x, y, size, color, o = {}) {
+  ctx.save();
+  ctx.font = `${o.weight || 700} ${size}px ${o.font || SANS}`;
+  ctx.textAlign = o.align || 'center'; ctx.textBaseline = 'middle';
+  ctx.globalAlpha = o.alpha === undefined ? 1 : o.alpha;
+  if (o.glow) { ctx.shadowColor = o.glow; ctx.shadowBlur = o.blur || 30; }
+  ctx.fillStyle = color; ctx.fillText(s, x, y);
+  ctx.restore();
+}
+
+// ---------- ブルーム(光のにじみ) ----------
+const bc = document.createElement('canvas'); bc.width = 270; bc.height = 480;
+const bctx = bc.getContext('2d');
+function bloom(strength = 0.8, blur = 14) {
+  bctx.clearRect(0, 0, 270, 480); bctx.drawImage(cv, 0, 0, 270, 480);
+  ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.filter = `blur(${blur}px)`;
+  ctx.globalAlpha = strength; ctx.drawImage(bc, 0, 0, W, H); ctx.restore();
+}
+
+// ---------- WebGL(レイマーチングとフラクタル) ----------
+const glc = document.createElement('canvas'); glc.width = 720; glc.height = 1280;
+const gl = glc.getContext('webgl', { preserveDrawingBuffer: true, antialias: false });
+const FS = `
+precision highp float;
+uniform vec2 R; uniform float T, K; uniform int M;
+vec3 pal(float t){ return .5+.5*cos(6.28318*(t+vec3(0.,.33,.67))); }
+mat2 rot(float a){ float c=cos(a), s=sin(a); return mat2(c,-s,s,c); }
+float map(vec3 p){
+  p.xy *= rot(p.z*.15);
+  float g = dot(sin(p*1.6), cos(p.zxy*1.6))/1.6;
+  float d = abs(g) - .05 - .05*K;
+  return max(d, .5 - length(p.xy))*.8;
+}
+void main(){
+  vec2 uv = (gl_FragCoord.xy*2. - R)/R.x;
+  vec3 col;
+  if (M == 0) {
+    vec3 ro = vec3(0., 0., T*2.2);
+    vec3 rd = normalize(vec3(uv, 1.15)); rd.xy *= rot(T*.25);
+    float t = 0., glow = 0., hit = 0.;
+    for (int i = 0; i < 80; i++) {
+      float d = map(ro + rd*t);
+      glow += .012/(.02 + abs(d));
+      if (d < .002) { hit = 1.; break; }
+      t += d; if (t > 14.) break;
+    }
+    vec3 p = ro + rd*t; vec2 e = vec2(.004, 0.);
+    vec3 n = normalize(vec3(map(p+e.xyy)-map(p-e.xyy), map(p+e.yxy)-map(p-e.yxy), map(p+e.yyx)-map(p-e.yyx)));
+    vec3 base = pal(p.z*.14 + dot(n, vec3(.25,.15,0.)) + T*.08);
+    float dif = clamp(dot(n, normalize(vec3(.4,.6,-.7))), 0., 1.);
+    float fres = pow(1. - clamp(dot(n, -rd), 0., 1.), 3.);
+    col = hit*(base*(.15 + .85*dif) + fres*vec3(.9,.95,1.));
+    col = mix(col, vec3(.02,.03,.08), 1. - exp(-t*.18));
+    col += pal(T*.05 + .5)*glow*.03*(1. + K);
+  } else {
+    float a = 1.75 + T*.17;
+    vec2 c = .7885*vec2(cos(a), sin(a));
+    vec2 z = rot(T*.12)*uv*(1.35*exp(-T*.1));
+    float n = 0., m2 = 0.;
+    for (int i = 0; i < 160; i++) {
+      z = vec2(z.x*z.x - z.y*z.y, 2.*z.x*z.y) + c;
+      m2 = dot(z, z); if (m2 > 64.) break; n += 1.;
+    }
+    if (m2 > 64.) {
+      float s = n - log(log(m2)/log(2.))/log(2.) + 4.;
+      col = pal(s*.035 + T*.06 + .55)*smoothstep(0., 24., s)*1.5*(1. + .4*K);
+    } else col = vec3(.01,.01,.03);
+  }
+  col *= 1. - .12*dot(uv*.6, uv*.6);
+  gl_FragColor = vec4(pow(max(col, 0.), vec3(.9)), 1.);
+}`;
+const prog = gl.createProgram();
+for (const [type, src] of [[gl.VERTEX_SHADER, 'attribute vec2 p;void main(){gl_Position=vec4(p,0.,1.);}'], [gl.FRAGMENT_SHADER, FS]]) {
+  const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+  gl.attachShader(prog, s);
+}
+gl.linkProgram(prog); gl.useProgram(prog);
+gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+const U = n => gl.getUniformLocation(prog, n);
+function shader(mode, t, k) {
+  gl.uniform2f(U('R'), glc.width, glc.height); gl.uniform1f(U('T'), t); gl.uniform1f(U('K'), k); gl.uniform1i(U('M'), mode);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  ctx.imageSmoothingQuality = 'high'; ctx.drawImage(glc, 0, 0, W, H);
+}
+
+// ---------- パーティクル ----------
+const textCache = {};
+function sampleText(lines, size, cy, gap, step = 4) {
+  const key = lines.join('|') + size + cy;
+  if (textCache[key]) return textCache[key];
+  const oc = document.createElement('canvas'); oc.width = W; oc.height = H;
+  const o = oc.getContext('2d');
+  o.font = `900 ${size}px ${SANS}`; o.textAlign = 'center'; o.textBaseline = 'middle'; o.fillStyle = '#fff';
+  lines.forEach((l, i) => o.fillText(l, W / 2, cy + (i - (lines.length - 1) / 2) * gap));
+  const d = o.getImageData(0, 0, W, H).data, pts = [];
+  for (let y = 0; y < H; y += step) for (let x = 0; x < W; x += step) if (d[(y * W + x) * 4 + 3] > 128) pts.push([x, y]);
+  const r = rng32(99);
+  for (let i = pts.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [pts[i], pts[j]] = [pts[j], pts[i]]; }
+  return textCache[key] = pts;
+}
+function makePS(n) {
+  const f = () => new Float32Array(n);
+  return { n, x: f(), y: f(), vx: f(), vy: f(), px: f(), py: f(), tx: f(), ty: f(), last: -2, r: null };
+}
+function setTargets(ps, pts) {
+  for (let i = 0; i < ps.n; i++) { const p = pts[i % pts.length]; ps.tx[i] = p[0] + (ps.r() - .5) * 3; ps.ty[i] = p[1] + (ps.r() - .5) * 3; }
+}
+function burst(ps, cx, cy, power) {
+  for (let i = 0; i < ps.n; i++) {
+    const dx = ps.x[i] - cx, dy = ps.y[i] - cy, d = Math.hypot(dx, dy) + 1, s = power * (.4 + ps.r());
+    ps.vx[i] += dx / d * s + (ps.r() - .5) * power * .6; ps.vy[i] += dy / d * s + (ps.r() - .5) * power * .6;
+  }
+}
+function integrate(ps, mode, t, spring = .07, damp = .8) {
+  for (let i = 0; i < ps.n; i++) {
+    ps.px[i] = ps.x[i]; ps.py[i] = ps.y[i];
+    if (mode === 'flow') {
+      const x = ps.x[i], y = ps.y[i];
+      const a = (Math.sin(x * .004 + t * .9) + Math.cos(y * .0032 - t * .6) + Math.sin((x + y) * .002 + t * .3)) * Math.PI;
+      ps.vx[i] = (ps.vx[i] + Math.cos(a) * .7) * .95; ps.vy[i] = (ps.vy[i] + Math.sin(a) * .7) * .95;
+    } else {
+      ps.vx[i] = (ps.vx[i] + (ps.tx[i] - ps.x[i]) * spring) * damp; ps.vy[i] = (ps.vy[i] + (ps.ty[i] - ps.y[i]) * spring) * damp;
+    }
+    ps.x[i] += ps.vx[i]; ps.y[i] += ps.vy[i];
+  }
+}
+function drawPS(ps, hue0, width = 3) {
+  ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.lineCap = 'round'; ctx.lineWidth = width;
+  const B = 8;
+  for (let b = 0; b < B; b++) {
+    ctx.strokeStyle = `hsla(${(hue0 + b * 14) % 360},95%,62%,.85)`; ctx.beginPath();
+    for (let i = b; i < ps.n; i += B) { ctx.moveTo(ps.px[i], ps.py[i]); ctx.lineTo(ps.x[i] + .1, ps.y[i]); }
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+// 途中のフレームから撮影しても同じ結果になるよう、必要なら先頭から計算し直す
+function advance(ps, sf, init, step) {
+  if (ps.last !== sf - 1) { init(); for (let k = 0; k < sf; k++) step(k); }
+  step(sf); ps.last = sf;
+}
+
+// ---------- シーンA: ターミナル(0〜4秒) ----------
+function sceneA(t) {
+  const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#070a14'); g.addColorStop(1, '#0d0718');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  const z = 1 + Math.pow(clamp((t - 3.55) / .45), 3) * 14;
+  ctx.save(); ctx.translate(W / 2, 960); ctx.scale(z, z); ctx.translate(-W / 2, -960);
+  const x0 = 70, y0 = 620, w = 940, h = 640;
+  ctx.fillStyle = '#11141f'; ctx.strokeStyle = '#2a3150'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.roundRect(x0, y0, w, h, 28); ctx.fill(); ctx.stroke();
+  ['#ff5f57', '#febc2e', '#28c840'].forEach((c, i) => { ctx.fillStyle = c; ctx.beginPath(); ctx.arc(x0 + 50 + i * 40, y0 + 46, 12, 0, 7); ctx.fill(); });
+  const lines = [
+    ['$ claude', '#7ee787', .3, .08],
+    ['> あなたの実力をすべて使い、', '#e6edf3', 1.0, .05],
+    ['  すごさを証明する動画を作って。', '#e6edf3', 1.75, .05],
+    ['● 了解。素材0・費用¥0。', '#ffb86b', 2.75, .025],
+    ['  全部、コードで作ります。', '#ffb86b', 3.1, .025],
+  ];
+  let cx = x0 + 50, cy = y0 + 150;
+  lines.forEach(([s, col, st, per], i) => {
+    const n = Math.floor(clamp((t - st) / per, 0, s.length));
+    const y = y0 + 150 + i * 92 + (i >= 3 ? 30 : 0);
+    if (n > 0) {
+      const part = s.slice(0, n);
+      txt(part, x0 + 50, y, 48, col, { align: 'left', font: MONO, weight: 500 });
+      ctx.font = `500 48px ${MONO}`; cx = x0 + 50 + ctx.measureText(part).width; cy = y;
+    }
+  });
+  if (Math.floor(t * 4) % 2 === 0 || t > 3.3) { ctx.fillStyle = '#e6edf3'; ctx.fillRect(cx + 6, cy - 30, 24, 58); }
+  ctx.restore();
+  const fl = Math.pow(clamp((t - 3.7) / .3), 2);
+  if (fl > 0) { ctx.fillStyle = `rgba(255,255,255,${fl})`; ctx.fillRect(0, 0, W, H); }
+}
+
+// ---------- シーンB: パーティクル(4〜12秒) ----------
+const psB = makePS(9000);
+function sceneB(sf, t, k) {
+  const T1 = () => sampleText(['絵も、'], 300, 900, 0), T2 = () => sampleText(['音も、'], 300, 900, 0), T3 = () => sampleText(['全部', 'コード。'], 250, 900, 310);
+  advance(psB, sf, () => {
+    psB.r = rng32(1234);
+    for (let i = 0; i < psB.n; i++) { const a = psB.r() * 6.283, s = 4 + psB.r() * 46; psB.x[i] = W / 2; psB.y[i] = 960; psB.vx[i] = Math.cos(a) * s; psB.vy[i] = Math.sin(a) * s; }
+  }, f => {
+    const s = f / FPS;
+    if (f === 60) setTargets(psB, T1());
+    if (f === 112) burst(psB, W / 2, 900, 46);
+    if (f === 120) setTargets(psB, T2());
+    if (f === 172) burst(psB, W / 2, 900, 46);
+    if (f === 180) setTargets(psB, T3());
+    const text = (f >= 60 && f < 112) || (f >= 120 && f < 172) || f >= 180;
+    if (text && f % 15 === 0 && f % 60 !== 0) burst(psB, W / 2, 900, 2.5);
+    integrate(psB, text ? 'text' : 'flow', s, .1, .78);
+  });
+  ctx.fillStyle = '#04050b'; ctx.fillRect(0, 0, W, H);
+  const rg = ctx.createRadialGradient(W / 2, 900, 0, W / 2, 900, 900);
+  rg.addColorStop(0, `rgba(60,40,140,${.22 + .2 * k})`); rg.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = rg; ctx.fillRect(0, 0, W, H);
+  drawPS(psB, 190 + t * 22);
+  bloom(.9, 16);
+  const a = ease(t / .8) * (1 - ease((t - 7.4) / .6));
+  txt('9,000個の粒子を、物理シミュレーション', W / 2, 1560, 44, '#cfd6ff', { alpha: a, weight: 500 });
+  txt('1粒ずつ、位置と速度を計算', W / 2, 1626, 34, '#8089b8', { alpha: a, weight: 400 });
+}
+
+// ---------- 見出し ----------
+function caption(title, sub, t, dur) {
+  const a = ease(t / .6) * (1 - ease((t - dur + .6) / .6));
+  const g = ctx.createLinearGradient(0, 1300, 0, H); g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,.8)');
+  ctx.fillStyle = g; ctx.fillRect(0, 1300, W, 620);
+  const y = 1540 + (1 - easeOut(t / .7)) * 40;
+  txt(title, W / 2, y, 96, '#fff', { alpha: a, weight: 900, glow: 'rgba(0,0,0,.9)', blur: 24 });
+  txt(sub, W / 2, y + 100, 36, '#dfe5ff', { alpha: a, weight: 500, glow: 'rgba(0,0,0,.9)', blur: 12 });
+}
+
+// ---------- シーンE: フィナーレ(26〜32秒) ----------
+const psE = makePS(9000);
+function sceneE(sf, t, k, f) {
+  advance(psE, sf, () => {
+    psE.r = rng32(4321);
+    for (let i = 0; i < psE.n; i++) { const a = psE.r() * 6.283, d = 900 + psE.r() * 900; psE.x[i] = W / 2 + Math.cos(a) * d; psE.y[i] = 760 + Math.sin(a) * d; psE.vx[i] = 0; psE.vy[i] = 0; }
+    setTargets(psE, sampleText(['Claude', 'Code'], 225, 760, 250));
+  }, ff => {
+    if (ff > 20 && ff % 15 === 0 && ff < 120) burst(psE, W / 2, 760, 7);
+    integrate(psE, 'text', ff / FPS, .05, .82);
+  });
+  ctx.fillStyle = '#04050b'; ctx.fillRect(0, 0, W, H);
+  const rg = ctx.createRadialGradient(W / 2, 760, 0, W / 2, 760, 1000);
+  rg.addColorStop(0, `rgba(90,50,170,${.28 + .25 * k})`); rg.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = rg; ctx.fillRect(0, 0, W, H);
+  // 実際の音のスペクトルで動くリング
+  const sp = A.spec[f], NB = sp.length, R0 = 430 + k * 22;
+  ctx.save(); ctx.translate(W / 2, 760); ctx.rotate(t * .12); ctx.globalCompositeOperation = 'lighter'; ctx.lineCap = 'round'; ctx.lineWidth = 9;
+  for (let i = 0; i < NB * 4; i++) {
+    const b = i % (NB * 2), v = sp[b < NB ? b : NB * 2 - 1 - b], a = i / (NB * 4) * 6.283, len = 8 + v * v * 150;
+    ctx.strokeStyle = `hsla(${200 + v * 140},95%,62%,.9)`; ctx.beginPath();
+    ctx.moveTo(Math.cos(a) * R0, Math.sin(a) * R0); ctx.lineTo(Math.cos(a) * (R0 + len), Math.sin(a) * (R0 + len)); ctx.stroke();
+  }
+  ctx.restore();
+  drawPS(psE, 20 + t * 30, 3.2);
+  bloom(.9, 16);
+  const stats = [['素材', '0点'], ['費用', '¥0'], ['フレーム', '960枚すべて計算'], ['音楽', '波形から合成'], ['人が描いた絵', 'ゼロ']];
+  stats.forEach(([a, b], i) => {
+    const st = 1 + i * .5, al = ease((t - st) / .3), y = 1350 + i * 80, dx = (1 - easeOut((t - st) / .4)) * 60;
+    txt(a, 150 - dx, y, 44, '#8e98c9', { align: 'left', alpha: al, weight: 500 });
+    txt(b, W - 150 + dx, y, 48, '#fff', { align: 'right', alpha: al, weight: 800 });
+    ctx.fillStyle = `rgba(120,130,200,${.25 * al})`; ctx.fillRect(150, y + 38, W - 300, 2);
+  });
+  txt('これが、Claude Code。', W / 2, 1780, 64, '#ffd86b', { alpha: ease((t - 4) / .4), weight: 900, glow: 'rgba(255,190,80,.7)', blur: 30 });
+}
+
+// ---------- 共通の表示 ----------
+function hud(f) {
+  const sp = A.spec[f];
+  ctx.save(); ctx.globalAlpha = .75;
+  for (let i = 0; i < sp.length; i++) { const h = 4 + sp[i] * sp[i] * 34; ctx.fillStyle = '#fff'; ctx.fillRect(60 + i * 9, 1880 - h, 5, h); }
+  ctx.restore();
+  txt(`FRAME ${String(f + 1).padStart(4, '0')} / ${TOTAL}`, W - 60, 1866, 26, 'rgba(255,255,255,.75)', { align: 'right', font: MONO, weight: 500 });
+  ctx.fillStyle = 'rgba(255,255,255,.18)'; ctx.fillRect(0, H - 6, W, 6);
+  ctx.fillStyle = '#ffd86b'; ctx.fillRect(0, H - 6, W * (f + 1) / TOTAL, 6);
+}
+
+window.renderFrame = function (f) {
+  const t = f / FPS, k = A.k[f];
+  ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over'; ctx.filter = 'none';
+  if (t < 4) sceneA(t);
+  else if (t < 12) sceneB(f - 120, t - 4, k);
+  else if (t < 20) { shader(0, t - 12, k); caption('光を、計算する。', '3D空間を1ピクセルごとに最大80回たどる', t - 12, 8); }
+  else if (t < 26) { shader(1, t - 20, k); caption('数式、ひとつ。', 'z → z² + c をくり返すだけの模様', t - 20, 6); }
+  else sceneE(f - 780, t - 26, k, f);
+  // 場面転換のフラッシュ
+  for (const ti of [4, 12, 20, 26]) if (t >= ti && t < ti + .5) { ctx.fillStyle = `rgba(255,255,255,${Math.exp(-(t - ti) * 9) * .9})`; ctx.fillRect(0, 0, W, H); }
+  hud(f);
+  if (t > 31.3) { ctx.fillStyle = `rgba(0,0,0,${clamp((t - 31.3) / .6)})`; ctx.fillRect(0, 0, W, H); }
+  return true;
+};
+</script>
+</body>
+</html>
